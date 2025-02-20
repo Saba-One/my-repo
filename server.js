@@ -6,7 +6,7 @@ const multer = require('multer');
 const nodemailer = require('nodemailer');
 
 const app = express();
-const port = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 // Middleware
 app.use(cors());
@@ -75,7 +75,7 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         };
 
         await axios.post(
-            `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/metafields.json`,
+            `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/graphql.json`,
             { metafield: metafieldData },
             { headers: getShopifyHeaders() }
         );
@@ -126,6 +126,6 @@ async function sendEmailNotification(name, email, message, imageUrls) {
 }
 
 // ✅ **Start the Server**
-app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
