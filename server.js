@@ -178,3 +178,8 @@ function createMetafieldData(formData) {
         ownerId:`gid://shopify/Shop/${process.env.SHOPIFY_STORE_ID}`
     };
 }
+
+// Add a simple route to check if the server is running
+app.get("/", (req, res) => {
+    res.send("Server is running!");
+});
