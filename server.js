@@ -19,7 +19,8 @@ app.use(cors({
         "https://heartsforever.co.uk",                  // Production frontend
         "http://localhost:3000",                        // Local development
         `https://${process.env.SHOPIFY_SHOP_DOMAIN}`,   // Shopify store
-        "https://admin.shopify.com"                     // Shopify admin
+        "https://admin.shopify.com",                    // Shopify admin
+        "https://my-repo-production.up.railway.app"     // Add your Railway domain
     ],
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -33,7 +34,8 @@ app.options("*", (req, res) => {
         "https://heartsforever.co.uk",
         "http://localhost:3000",
         `https://${process.env.SHOPIFY_SHOP_DOMAIN}`,
-        "https://admin.shopify.com"
+        "https://admin.shopify.com",
+        "https://my-repo-production.up.railway.app"    // Add your Railway domain
     ].includes(origin)) {
         res.setHeader("Access-Control-Allow-Origin", origin);
     }
@@ -56,8 +58,18 @@ const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/
 // ✅ **Form Submission Endpoint**
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
     try {
-        console.log('Processing form submission...');
+        // Add request validation
+        if (!req.body) {
+            throw new Error('No form data received');
+        }
+
+        console.log('Form data received:', JSON.stringify(req.body, null, 2));
         
+        // Validate Shopify credentials
+        if (!process.env.SHOPIFY_ACCESS_TOKEN || !process.env.SHOPIFY_SHOP_DOMAIN) {
+            throw new Error('Missing Shopify credentials');
+        }
+
         let uploadedImageURLs = [];
         if (req.body.images) {
             const images = req.body.images;
@@ -173,15 +185,16 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         console.error('Form submission error:', {
             message: error.message,
             stack: error.stack,
-            responseData: error.response?.data,
-            requestBody: error.config?.data
+            response: error.response?.data,
+            status: error.response?.status,
+            headers: error.response?.headers
         });
         
         res.status(500).json({ 
             success: false, 
             message: "Error processing form submission",
             error: error.message,
-            details: error.response?.data
+            details: error.response?.data || error.message
         });
     }
 });
