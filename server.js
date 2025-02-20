@@ -9,13 +9,35 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: [
+        process.env.SHOPIFY_SHOP_DOMAIN, // Your Shopify store domain
+        "https://admin.shopify.com", // Allows Shopify Admin requests
+        "https://heartsforever.co.uk", // Your live site
+        "http://localhost:3000" // Local development
+    ],
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
+}));
+
+// ✅ Manually Handle Preflight Requests
+app.options("*", (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*"); // Change "*" to your Shopify store later
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.sendStatus(200);
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Multer Setup for Handling File Uploads (Images)
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
+
+// Update GraphQL endpoint to use correct env variable
+const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/graphql.json`;
 
 // ✅ **Form Submission Endpoint**
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
@@ -29,7 +51,7 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         if (files && files.length > 0) {
             for (const file of files) {
                 const imageResponse = await axios.post(
-                    `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2023-10/graphql.json`,
+                    SHOPIFY_ADMIN_API_URL,
                     {
                         query: `
                         mutation fileCreate($files: [FileCreateInput!]!) {
@@ -70,7 +92,7 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         });
 
         await axios.post(
-            `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/graphql.json`,
+            SHOPIFY_ADMIN_API_URL,
             { metafield: metafieldData },
             { headers: getShopifyHeaders() }
         );
@@ -175,11 +197,17 @@ function createMetafieldData(formData) {
             submittedAt: new Date().toISOString(),
             yearOfPurchase: formData.yearOfPurchase
         }),
-        ownerId:`gid://shopify/Shop/${process.env.SHOPIFY_STORE_ID}`
+        ownerId:`gid://shopify/Shop/${process.env.SHOP_ID}`
     };
 }
 
 // Add a simple route to check if the server is running
 app.get("/", (req, res) => {
     res.send("Server is running!");
+});
+
+// Add error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
 });
