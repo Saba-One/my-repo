@@ -175,6 +175,6 @@ function createMetafieldData(formData) {
             submittedAt: new Date().toISOString(),
             yearOfPurchase: formData.yearOfPurchase
         }),
-        ownerId: formData.customerId || null // Optional: Link to customer if available
+        ownerId:`gid://shopify/Shop/${process.env.SHOPIFY_STORE_ID}`
     };
 }
