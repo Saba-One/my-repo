@@ -56,14 +56,19 @@ const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/
 // ✅ **Form Submission Endpoint**
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
     try {
-        // Log incoming request body for debugging
-        console.log('Received form data:', JSON.stringify(req.body, null, 2));
+        // Debug logging
+        console.log('Headers:', req.headers);
+        console.log('Body:', JSON.stringify(req.body, null, 2));
+        console.log('Files:', req.files);
 
-        // Validate required fields
-        if (!req.body.firstName || !req.body.lastName || !req.body.email || !req.body.phone) {
+        // Validate required fields with detailed error
+        const requiredFields = ['firstName', 'lastName', 'email', 'phone'];
+        const missingFields = requiredFields.filter(field => !req.body[field]);
+        
+        if (missingFields.length > 0) {
             return res.status(400).json({ 
                 success: false, 
-                message: "Missing required fields" 
+                message: `Missing required fields: ${missingFields.join(', ')}` 
             });
         }
 
@@ -135,17 +140,65 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         }
         
         // Create metafield data with uploaded image URLs
-        const metafieldData = createMetafieldData({
-            ...formData,
-            images: uploadedImageURLs
-        });
+        const metafieldData = {
+            query: `
+                mutation metafieldCreate($input: MetafieldInput!) {
+                    metafieldCreate(metafield: $input) {
+                        metafield {
+                            id
+                            namespace
+                            key
+                            value
+                        }
+                        userErrors {
+                            field
+                            message
+                        }
+                    }
+                }
+            `,
+            variables: {
+                input: {
+                    namespace: "custom_forms",
+                    key: "valuation_form",
+                    type: "json",
+                    value: JSON.stringify({
+                        customerInfo: {
+                            firstName: formData.firstName,
+                            lastName: formData.lastName,
+                            email: formData.email,
+                            phone: formData.phone,
+                            referralSource: formData.referralSource
+                        },
+                        itemDetails: {
+                            category: formData.category,
+                            brand: formData.brand,
+                            modelNo: formData.modelNo,
+                            condition: formData.condition,
+                            hasBox: formData.hasBox,
+                            hasPapers: formData.hasPapers,
+                            askingPrice: formData.askingPrice,
+                            additionalInfo: formData.additionalInfo
+                        },
+                        images: uploadedImageURLs,
+                        submittedAt: new Date().toISOString()
+                    }),
+                    ownerId: `gid://shopify/Shop/${process.env.SHOP_ID}`
+                }
+            }
+        };
+
+        // Log before Shopify API call
+        console.log('Sending to Shopify:', JSON.stringify(metafieldData, null, 2));
 
         // Send to Shopify
-        await axios.post(
+        const shopifyResponse = await axios.post(
             SHOPIFY_ADMIN_API_URL,
-            { metafield: metafieldData },
+            metafieldData,
             { headers: getShopifyHeaders() }
         );
+
+        console.log('Shopify Response:', JSON.stringify(shopifyResponse.data, null, 2));
 
         // Send email notification
         await sendEmailNotification(
@@ -161,14 +214,18 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Detailed Form Submission Error:', 
-            error.response ? error.response.data : error
-        );
+        console.error('Detailed server error:', {
+            message: error.message,
+            stack: error.stack,
+            response: error.response?.data,
+            request: error.config
+        });
+        
         res.status(500).json({ 
             success: false, 
             message: "Internal server error",
             error: error.message,
-            details: error.response?.data || 'No additional error details'
+            details: error.response?.data
         });
     }
 });
@@ -270,6 +327,14 @@ function createMetafieldData(formData) {
 // Add a simple route to check if the server is running
 app.get("/", (req, res) => {
     res.send("Server is running!");
+});
+
+// Add health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'healthy',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Add error handling middleware
