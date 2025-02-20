@@ -4,9 +4,14 @@ const cors = require('cors');
 const axios = require('axios');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const bodyParser = require('body-parser');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+// Increase the body size limit
+app.use(bodyParser.json({ limit: "50mb" }));  // Increase to 50MB
+app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 
 // Middleware
 app.use(cors({
@@ -23,7 +28,7 @@ app.use(cors({
 
 // ✅ Manually Handle Preflight Requests
 app.options("*", (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*"); // Change "*" to your Shopify store later
+    res.setHeader("Access-Control-Allow-Origin", "*"); // Change "6404af-42.myshopify.com" to your Shopify store later
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.sendStatus(200);
