@@ -61,18 +61,13 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         }
 
         // **(2) Store Form Data in Shopify Metafields**
-        const metafieldData = {
-            namespace: "custom",
-            key: `form_submission_${Date.now()}`,
-            value: JSON.stringify({
-                name,
-                email,
-                message,
-                checkbox,
-                images: uploadedImageURLs
-            }),
-            type: "json"
-        };
+        const metafieldData = createMetafieldData({
+            name,
+            email,
+            message,
+            checkbox,
+            images: uploadedImageURLs
+        });
 
         await axios.post(
             `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2023-10/graphql.json`,
@@ -129,3 +124,57 @@ async function sendEmailNotification(name, email, message, imageUrls) {
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
+
+// Utility function to create metafield data
+function createMetafieldData(formData) {
+    return {
+        namespace: "custom_forms",
+        key: "valuation_form",
+        type: "json",
+        value: JSON.stringify({
+            customerInfo: {
+                firstName: formData.firstName,
+                lastName: formData.lastName,
+                email: formData.email,
+                phone: formData.phone,
+                referralSource: formData.referralSource
+            },
+            itemDetails: {
+                category: formData.category,
+                // Watch-specific fields
+                brand: formData.brand,
+                modelNo: formData.modelNo,
+                condition: formData.condition,
+                hasBox: formData.hasBox,
+                hasPapers: formData.hasPapers,
+                // Jewellery-specific fields
+                itemType: formData.itemType,
+                metalType: formData.metalType,
+                diamondCarat: formData.diamondCarat,
+                // Gold-specific fields
+                goldKarat: formData.goldKarat,
+                itemWeight: formData.itemWeight,
+                // Common fields
+                askingPrice: formData.askingPrice,
+                additionalInfo: formData.additionalInfo
+            },
+            images: {
+                front: formData.images.front ? {
+                    file: formData.images.front.file,
+                    preview: formData.images.front.preview
+                } : null,
+                back: formData.images.back ? {
+                    file: formData.images.back.file,
+                    preview: formData.images.back.preview
+                } : null,
+                accessories: formData.images.accessories ? {
+                    file: formData.images.accessories.file,
+                    preview: formData.images.accessories.preview
+                } : null
+            },
+            submittedAt: new Date().toISOString(),
+            yearOfPurchase: formData.yearOfPurchase
+        }),
+        ownerId: formData.customerId || null // Optional: Link to customer if available
+    };
+}
