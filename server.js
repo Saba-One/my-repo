@@ -57,7 +57,7 @@ const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
     try {
         // Log incoming request body for debugging
-        console.log('Received form data:', req.body);
+        console.log('Received form data:', JSON.stringify(req.body, null, 2));
 
         // Validate required fields
         if (!req.body.firstName || !req.body.lastName || !req.body.email || !req.body.phone) {
@@ -75,35 +75,62 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         let uploadedImageURLs = [];
         if (files && files.length > 0) {
             for (const file of files) {
-                const imageResponse = await axios.post(
-                    SHOPIFY_ADMIN_API_URL,
-                    {
-                        query: `
-                        mutation fileCreate($files: [FileCreateInput!]!) {
-                            fileCreate(files: $files) {
-                                files {
-                                    url
+                try {
+                    console.log('Attempting to upload file:', file.originalname);
+                    const imageResponse = await axios.post(
+                        SHOPIFY_ADMIN_API_URL,
+                        {
+                            query: `
+                            mutation fileCreate($files: [FileCreateInput!]!) {
+                                fileCreate(files: $files) {
+                                    files {
+                                        url
+                                        id
+                                    }
+                                    userErrors {
+                                        field
+                                        message
+                                    }
                                 }
-                                userErrors {
-                                    field
-                                    message
-                                }
+                            }`,
+                            variables: {
+                                files: [{
+                                    originalSource: file.originalname,
+                                    contentType: file.mimetype,
+                                    filename: file.originalname,
+                                    fileSize: file.size,
+                                    data: file.buffer.toString('base64')
+                                }]
                             }
-                        }`,
-                        variables: {
-                            files: [{
-                                contentType: file.mimetype,
-                                filename: file.originalname,
-                                fileSize: file.size,
-                                data: file.buffer.toString('base64')
-                            }]
+                        },
+                        { 
+                            headers: {
+                                ...getShopifyHeaders(),
+                                'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
+                            }
                         }
-                    },
-                    { headers: getShopifyHeaders() }
-                );
+                    );
 
-                const imageUrl = imageResponse.data.data.fileCreate.files[0]?.url;
-                if (imageUrl) uploadedImageURLs.push(imageUrl);
+                    console.log('Shopify GraphQL Response:', JSON.stringify(imageResponse.data, null, 2));
+
+                    // More robust error checking
+                    if (imageResponse.data.data.fileCreate.userErrors.length > 0) {
+                        console.error('Shopify file upload errors:', 
+                            JSON.stringify(imageResponse.data.data.fileCreate.userErrors, null, 2)
+                        );
+                        continue; // Skip this file but continue with others
+                    }
+
+                    const imageUrl = imageResponse.data.data.fileCreate.files[0]?.url;
+                    if (imageUrl) {
+                        console.log('Successfully uploaded file:', file.originalname, 'URL:', imageUrl);
+                        uploadedImageURLs.push(imageUrl);
+                    }
+                } catch (uploadError) {
+                    console.error('Detailed Upload Error for file', file.originalname, ':', 
+                        uploadError.response ? uploadError.response.data : uploadError
+                    );
+                }
             }
         }
         
@@ -134,11 +161,14 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error processing form submission:", error);
+        console.error('Detailed Form Submission Error:', 
+            error.response ? error.response.data : error
+        );
         res.status(500).json({ 
             success: false, 
             message: "Internal server error",
-            error: error.message 
+            error: error.message,
+            details: error.response?.data || 'No additional error details'
         });
     }
 });
@@ -147,7 +177,8 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
 function getShopifyHeaders() {
     return {
         "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     };
 }
 
