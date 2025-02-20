@@ -16,21 +16,30 @@ app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 // Middleware
 app.use(cors({
     origin: [
-        process.env.SHOPIFY_SHOP_DOMAIN, // Your Shopify store domain
-        "https://admin.shopify.com", // Allows Shopify Admin requests
-        "https://heartsforever.co.uk", // Your live site
-        "http://localhost:3000" // Local development
+        "https://heartsforever.co.uk",                  // Production frontend
+        "http://localhost:3000",                        // Local development
+        `https://${process.env.SHOPIFY_SHOP_DOMAIN}`,   // Shopify store
+        "https://admin.shopify.com"                     // Shopify admin
     ],
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
 }));
 
 // ✅ Manually Handle Preflight Requests
 app.options("*", (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*"); // Change "6404af-42.myshopify.com" to your Shopify store later
+    const origin = req.headers.origin;
+    if (origin && [
+        "https://heartsforever.co.uk",
+        "http://localhost:3000",
+        `https://${process.env.SHOPIFY_SHOP_DOMAIN}`,
+        "https://admin.shopify.com"
+    ].includes(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+    }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.sendStatus(200);
 });
 
@@ -47,8 +56,19 @@ const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/
 // ✅ **Form Submission Endpoint**
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
     try {
+        // Log incoming request body for debugging
+        console.log('Received form data:', req.body);
+
+        // Validate required fields
+        if (!req.body.firstName || !req.body.lastName || !req.body.email || !req.body.phone) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Missing required fields" 
+            });
+        }
+
         // Extract Form Data
-        const { name, email, message, checkbox } = req.body;  // Add more fields if needed
+        const formData = req.body;
         const files = req.files; // Uploaded images
 
         // **(1) Upload Images to Shopify Files API** (If images are included)
@@ -86,30 +106,40 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
                 if (imageUrl) uploadedImageURLs.push(imageUrl);
             }
         }
-
-        // **(2) Store Form Data in Shopify Metafields**
+        
+        // Create metafield data with uploaded image URLs
         const metafieldData = createMetafieldData({
-            name,
-            email,
-            message,
-            checkbox,
+            ...formData,
             images: uploadedImageURLs
         });
 
+        // Send to Shopify
         await axios.post(
             SHOPIFY_ADMIN_API_URL,
             { metafield: metafieldData },
             { headers: getShopifyHeaders() }
         );
 
-        // **(3) Send Email Notification**
-        await sendEmailNotification(name, email, message, uploadedImageURLs);
+        // Send email notification
+        await sendEmailNotification(
+            `${formData.firstName} ${formData.lastName}`,
+            formData.email,
+            formData.additionalInfo || '',
+            uploadedImageURLs
+        );
 
-        res.json({ success: true, message: "Form submitted successfully!" });
+        res.json({ 
+            success: true, 
+            message: "Form submitted successfully!" 
+        });
 
     } catch (error) {
-        console.error("Error submitting form:", error.response?.data || error.message);
-        res.status(500).json({ success: false, message: "Form submission failed!" });
+        console.error("Error processing form submission:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: "Internal server error",
+            error: error.message 
+        });
     }
 });
 
