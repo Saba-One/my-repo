@@ -56,149 +56,104 @@ const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/
 // ✅ **Form Submission Endpoint**
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
     try {
-        // Debug logging
-        console.log('Headers:', req.headers);
-        console.log('Body:', JSON.stringify(req.body, null, 2));
-        console.log('Files:', req.files);
-
-        // Validate required fields with detailed error
-        const requiredFields = ['firstName', 'lastName', 'email', 'phone'];
-        const missingFields = requiredFields.filter(field => !req.body[field]);
+        console.log('Processing form submission...');
         
-        if (missingFields.length > 0) {
-            return res.status(400).json({ 
-                success: false, 
-                message: `Missing required fields: ${missingFields.join(', ')}` 
-            });
-        }
-
-        // Extract Form Data
-        const formData = req.body;
-        const files = req.files; // Uploaded images
-
-        // **(1) Upload Images to Shopify Files API** (If images are included)
         let uploadedImageURLs = [];
-        if (files && files.length > 0) {
-            for (const file of files) {
-                try {
-                    console.log('Attempting to upload file:', file.originalname);
-                    const imageResponse = await axios.post(
-                        SHOPIFY_ADMIN_API_URL,
-                        {
-                            query: `
-                            mutation fileCreate($files: [FileCreateInput!]!) {
-                                fileCreate(files: $files) {
-                                    files {
-                                        url
-                                        id
-                                    }
-                                    userErrors {
-                                        field
-                                        message
-                                    }
-                                }
-                            }`,
-                            variables: {
-                                files: [{
-                                    originalSource: file.originalname,
-                                    contentType: file.mimetype,
-                                    filename: file.originalname,
-                                    fileSize: file.size,
-                                    data: file.buffer.toString('base64')
-                                }]
-                            }
-                        },
-                        { 
-                            headers: {
-                                ...getShopifyHeaders(),
-                                'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN
-                            }
+        if (req.body.images) {
+            const images = req.body.images;
+            for (const [key, value] of Object.entries(images)) {
+                if (value && typeof value === 'string') {
+                    try {
+                        // Handle both raw base64 and data URI formats
+                        let base64Data = value;
+                        if (value.startsWith('data:image')) {
+                            base64Data = value.split(',')[1];
                         }
-                    );
+                        
+                        // Validate base64 content
+                        if (!base64Data) {
+                            console.error('Invalid base64 data for', key);
+                            continue;
+                        }
 
-                    console.log('Shopify GraphQL Response:', JSON.stringify(imageResponse.data, null, 2));
-
-                    // More robust error checking
-                    if (imageResponse.data.data.fileCreate.userErrors.length > 0) {
-                        console.error('Shopify file upload errors:', 
-                            JSON.stringify(imageResponse.data.data.fileCreate.userErrors, null, 2)
+                        console.log(`Uploading image for ${key}...`);
+                        const imageResponse = await axios.post(
+                            SHOPIFY_ADMIN_API_URL,
+                            {
+                                query: `
+                                mutation fileCreate($files: [FileCreateInput!]!) {
+                                    fileCreate(files: $files) {
+                                        files {
+                                            url
+                                        }
+                                        userErrors {
+                                            field
+                                            message
+                                        }
+                                    }
+                                }`,
+                                variables: {
+                                    files: [{
+                                        originalSource: `${key}-image.jpg`,
+                                        contentType: 'image/jpeg',
+                                        filename: `${key}-image.jpg`,
+                                        fileSize: Buffer.from(base64Data, 'base64').length,
+                                        data: base64Data
+                                    }]
+                                }
+                            },
+                            { 
+                                headers: getShopifyHeaders()
+                            }
                         );
-                        continue; // Skip this file but continue with others
-                    }
 
-                    const imageUrl = imageResponse.data.data.fileCreate.files[0]?.url;
-                    if (imageUrl) {
-                        console.log('Successfully uploaded file:', file.originalname, 'URL:', imageUrl);
-                        uploadedImageURLs.push(imageUrl);
+                        if (imageResponse.data.data?.fileCreate?.files?.[0]?.url) {
+                            uploadedImageURLs.push(imageResponse.data.data.fileCreate.files[0].url);
+                            console.log(`Successfully uploaded ${key} image`);
+                        } else {
+                            console.error('No URL in response for', key, ':', imageResponse.data);
+                        }
+                    } catch (uploadError) {
+                        console.error('Image upload error for', key, ':', uploadError.message);
+                        if (uploadError.response) {
+                            console.error('Response data:', uploadError.response.data);
+                        }
                     }
-                } catch (uploadError) {
-                    console.error('Detailed Upload Error for file', file.originalname, ':', 
-                        uploadError.response ? uploadError.response.data : uploadError
-                    );
                 }
             }
         }
-        
-        // Create metafield data with uploaded image URLs
-        const metafieldData = {
-            query: `
-                mutation metafieldCreate($input: MetafieldInput!) {
+
+        // Create form submission data
+        const formData = {
+            ...req.body,
+            images: uploadedImageURLs
+        };
+
+        // Create metafield with the form data
+        const metafieldResponse = await axios.post(
+            SHOPIFY_ADMIN_API_URL,
+            {
+                query: `mutation metafieldCreate($input: MetafieldInput!) {
                     metafieldCreate(metafield: $input) {
                         metafield {
                             id
-                            namespace
-                            key
-                            value
                         }
                         userErrors {
                             field
                             message
                         }
                     }
+                }`,
+                variables: {
+                    input: createMetafieldData(formData)
                 }
-            `,
-            variables: {
-                input: {
-                    namespace: "custom_forms",
-                    key: "valuation_form",
-                    type: "json",
-                    value: JSON.stringify({
-                        customerInfo: {
-                            firstName: formData.firstName,
-                            lastName: formData.lastName,
-                            email: formData.email,
-                            phone: formData.phone,
-                            referralSource: formData.referralSource
-                        },
-                        itemDetails: {
-                            category: formData.category,
-                            brand: formData.brand,
-                            modelNo: formData.modelNo,
-                            condition: formData.condition,
-                            hasBox: formData.hasBox,
-                            hasPapers: formData.hasPapers,
-                            askingPrice: formData.askingPrice,
-                            additionalInfo: formData.additionalInfo
-                        },
-                        images: uploadedImageURLs,
-                        submittedAt: new Date().toISOString()
-                    }),
-                    ownerId: `gid://shopify/Shop/${process.env.SHOP_ID}`
-                }
-            }
-        };
-
-        // Log before Shopify API call
-        console.log('Sending to Shopify:', JSON.stringify(metafieldData, null, 2));
-
-        // Send to Shopify
-        const shopifyResponse = await axios.post(
-            SHOPIFY_ADMIN_API_URL,
-            metafieldData,
+            },
             { headers: getShopifyHeaders() }
         );
 
-        console.log('Shopify Response:', JSON.stringify(shopifyResponse.data, null, 2));
+        if (metafieldResponse.data.data?.metafieldCreate?.userErrors?.length > 0) {
+            throw new Error(JSON.stringify(metafieldResponse.data.data.metafieldCreate.userErrors));
+        }
 
         // Send email notification
         await sendEmailNotification(
@@ -210,20 +165,21 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
 
         res.json({ 
             success: true, 
-            message: "Form submitted successfully!" 
+            message: "Form submitted successfully!",
+            uploadedImages: uploadedImageURLs
         });
 
     } catch (error) {
-        console.error('Detailed server error:', {
+        console.error('Form submission error:', {
             message: error.message,
             stack: error.stack,
-            response: error.response?.data,
-            request: error.config
+            responseData: error.response?.data,
+            requestBody: error.config?.data
         });
         
         res.status(500).json({ 
             success: false, 
-            message: "Internal server error",
+            message: "Error processing form submission",
             error: error.message,
             details: error.response?.data
         });
