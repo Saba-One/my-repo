@@ -48,90 +48,121 @@ app.options("*", (req, res) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Test endpoints for connectivity diagnosis
+app.get('/test', (req, res) => {
+    res.json({ status: 'ok', message: 'Server is running' });
+});
+
+app.post('/test', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        message: 'POST endpoint working',
+        receivedData: !!req.body 
+    });
+});
+
 // Multer Setup for Handling File Uploads (Images)
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Update GraphQL endpoint to use correct env variable
-const SHOPIFY_ADMIN_API_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/graphql.json`;
+// Update GraphQL endpoint construction
+const SHOPIFY_ADMIN_API_URL = process.env.SHOPIFY_SHOP_DOMAIN 
+    ? `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2023-10/graphql.json`
+    : null;
+
+// Add environment variable validation at startup
+const validateEnvironment = () => {
+    const required = ['SHOPIFY_ACCESS_TOKEN', 'SHOPIFY_SHOP_DOMAIN', 'SHOP_ID'];
+    const missing = required.filter(key => !process.env[key]);
+    if (missing.length) {
+        throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+    }
+    console.log('Environment validation passed');
+    console.log('Shopify API URL:', SHOPIFY_ADMIN_API_URL);
+};
+
+// Call validation on startup
+validateEnvironment();
 
 // ✅ **Form Submission Endpoint**
 app.post('/submit-form', upload.array('images', 5), async (req, res) => {
     try {
-        // Add request validation
-        if (!req.body) {
-            throw new Error('No form data received');
+        console.log('Starting form submission process...');
+        console.log('API URL:', SHOPIFY_ADMIN_API_URL);
+        
+        if (!SHOPIFY_ADMIN_API_URL) {
+            throw new Error('Shopify API URL not configured');
         }
 
-        console.log('Form data received:', JSON.stringify(req.body, null, 2));
-        
-        // Validate Shopify credentials
-        if (!process.env.SHOPIFY_ACCESS_TOKEN || !process.env.SHOPIFY_SHOP_DOMAIN) {
-            throw new Error('Missing Shopify credentials');
+        // Validate incoming data
+        if (!req.body || !req.body.images) {
+            throw new Error('Invalid form data received');
         }
 
         let uploadedImageURLs = [];
-        if (req.body.images) {
-            const images = req.body.images;
-            for (const [key, value] of Object.entries(images)) {
-                if (value && typeof value === 'string') {
-                    try {
-                        // Handle both raw base64 and data URI formats
-                        let base64Data = value;
-                        if (value.startsWith('data:image')) {
-                            base64Data = value.split(',')[1];
-                        }
-                        
-                        // Validate base64 content
-                        if (!base64Data) {
-                            console.error('Invalid base64 data for', key);
-                            continue;
-                        }
+        const images = req.body.images;
+        
+        // Handle front image upload
+        if (images.front) {
+            try {
+                console.log('Attempting to upload front image...');
+                let base64Data = images.front;
+                if (base64Data.includes(',')) {
+                    base64Data = base64Data.split(',')[1];
+                }
 
-                        console.log(`Uploading image for ${key}...`);
-                        const imageResponse = await axios.post(
-                            SHOPIFY_ADMIN_API_URL,
-                            {
-                                query: `
-                                mutation fileCreate($files: [FileCreateInput!]!) {
-                                    fileCreate(files: $files) {
-                                        files {
-                                            url
-                                        }
-                                        userErrors {
-                                            field
-                                            message
-                                        }
-                                    }
-                                }`,
-                                variables: {
-                                    files: [{
-                                        originalSource: `${key}-image.jpg`,
-                                        contentType: 'image/jpeg',
-                                        filename: `${key}-image.jpg`,
-                                        fileSize: Buffer.from(base64Data, 'base64').length,
-                                        data: base64Data
-                                    }]
+                const imageResponse = await axios.post(
+                    SHOPIFY_ADMIN_API_URL,
+                    {
+                        query: `
+                        mutation fileCreate($files: [FileCreateInput!]!) {
+                            fileCreate(files: $files) {
+                                files {
+                                    url
                                 }
-                            },
-                            { 
-                                headers: getShopifyHeaders()
+                                userErrors {
+                                    field
+                                    message
+                                }
                             }
-                        );
-
-                        if (imageResponse.data.data?.fileCreate?.files?.[0]?.url) {
-                            uploadedImageURLs.push(imageResponse.data.data.fileCreate.files[0].url);
-                            console.log(`Successfully uploaded ${key} image`);
-                        } else {
-                            console.error('No URL in response for', key, ':', imageResponse.data);
+                        }`,
+                        variables: {
+                            files: [{
+                                originalSource: 'front-image.jpg',
+                                contentType: 'image/jpeg',
+                                filename: 'front-image.jpg',
+                                fileSize: Buffer.from(base64Data, 'base64').length,
+                                data: base64Data
+                            }]
                         }
-                    } catch (uploadError) {
-                        console.error('Image upload error for', key, ':', uploadError.message);
-                        if (uploadError.response) {
-                            console.error('Response data:', uploadError.response.data);
+                    },
+                    { 
+                        headers: {
+                            'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN,
+                            'Content-Type': 'application/json'
                         }
                     }
+                );
+
+                console.log('Image upload response:', JSON.stringify(imageResponse.data, null, 2));
+
+                if (imageResponse.data.data?.fileCreate?.userErrors?.length > 0) {
+                    throw new Error(JSON.stringify(imageResponse.data.data.fileCreate.userErrors));
                 }
+
+                if (imageResponse.data.data?.fileCreate?.files?.[0]?.url) {
+                    uploadedImageURLs.push(imageResponse.data.data.fileCreate.files[0].url);
+                    console.log('Successfully uploaded front image');
+                } else {
+                    console.error('No URL in response:', imageResponse.data);
+                }
+            } catch (uploadError) {
+                console.error('Image upload error:', {
+                    message: uploadError.message,
+                    response: uploadError.response?.data,
+                    status: uploadError.response?.status
+                });
+                throw new Error(`Image upload failed: ${uploadError.message}`);
             }
         }
 
@@ -182,25 +213,31 @@ app.post('/submit-form', upload.array('images', 5), async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Form submission error:', {
+        console.error('Detailed error:', {
             message: error.message,
             stack: error.stack,
             response: error.response?.data,
             status: error.response?.status,
-            headers: error.response?.headers
+            config: error.config
         });
         
         res.status(500).json({ 
             success: false, 
-            message: "Error processing form submission",
-            error: error.message,
-            details: error.response?.data || error.message
+            message: error.message || "Error processing form submission",
+            details: {
+                apiUrl: SHOPIFY_ADMIN_API_URL,
+                error: error.response?.data || error.message,
+                status: error.response?.status
+            }
         });
     }
 });
 
 // ✅ **Utility Function to Get Shopify API Headers**
 function getShopifyHeaders() {
+    if (!process.env.SHOPIFY_ACCESS_TOKEN) {
+        throw new Error('Shopify access token not configured');
+    }
     return {
         "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
         "Content-Type": "application/json",
